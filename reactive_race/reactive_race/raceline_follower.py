@@ -8,7 +8,7 @@ import numpy as np
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
-import math
+import math 
 import time
  
 WAYPOINTS = [

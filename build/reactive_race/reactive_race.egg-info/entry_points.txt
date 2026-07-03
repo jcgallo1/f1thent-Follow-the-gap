@@ -1,6 +1,3 @@
 [console_scripts]
-manual_driver = reactive_race.manual_driver:main
 raceline_follower = reactive_race.raceline_follower:main
-reactive_node = reactive_race.reactive_node:main
-waypoint_recorder = reactive_race.waypoint_recorder:main
 

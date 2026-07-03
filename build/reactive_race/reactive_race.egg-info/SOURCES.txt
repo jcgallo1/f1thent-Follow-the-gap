@@ -8,12 +8,8 @@ setup.py
 ../build/reactive_race/reactive_race.egg-info/requires.txt
 ../build/reactive_race/reactive_race.egg-info/top_level.txt
 ../build/reactive_race/reactive_race.egg-info/zip-safe
-reactive_race/1vuelta.py
 reactive_race/__init__.py
-reactive_race/manual_driver.py
 reactive_race/raceline_follower.py
-reactive_race/reactive_node.py
-reactive_race/waypoint_recorder.py
 resource/reactive_race
 test/test_copyright.py
 test/test_flake8.py

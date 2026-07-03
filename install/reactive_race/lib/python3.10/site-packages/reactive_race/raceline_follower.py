@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-F1Tenth Controller - Continuous Follow the Gap with 3-Range Behavior State Machine
-El Follow the Gap guía al coche en todo momento. Los estados solo regulan 
-la velocidad y la activación del escudo de repulsión de emergencia.
+F1Tenth Controller - Follow the Gap - Jcgallo
 """
 import rclpy
 from rclpy.node import Node
@@ -10,7 +8,7 @@ import numpy as np
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
-import math
+import math 
 import time
  
 WAYPOINTS = [
@@ -27,28 +25,28 @@ WAYPOINTS = [
 ]
 
 class P:
-    # ── VARIABLES DE CONTROL FÍSICO (Ajusta para suavizar o acelerar respuesta) ──
-    CLIP          = 10.0     # Distancia máxima que lee el LiDAR (recorta lecturas infinitas)
-    MAX_STEER     = 0.41      # Límite físico de giro del servo de dirección (~24 grados)
-    STEER_SMOOTH  = 0.15     # Suavizado de dirección (Menor = giro más rápido/nervioso, Mayor = más lento/estable)
+    # ── VARIABLES DE CONTROL FÍSICO  ──
+    CLIP          = 10.0     # Distancia máxima que lee el LiDAR 
+    MAX_STEER     = 0.41     # Límite físico de giro del servo de dirección (~24 grados)
+    STEER_SMOOTH  = 0.15     # Suavizado de dirección 
 
-    # ── PARÁMETROS DEL ALGORITMO FOLLOW THE GAP (Activo siempre) ──
+    # ── PARÁMETROS DEL ALGORITMO FOLLOW THE GAP ──
     SAFE_GAP_DIST = 5.0       # Umbral de distancia para considerar un rayo como "espacio libre" (en metros)
-    BUBBLE_R      = 0.90     # Radio de la burbuja de seguridad alrededor de los obstáculos (en metros)
+    BUBBLE_R      = 0.90      # Radio de la burbuja de seguridad alrededor de los obstáculos (en metros)
     MAX_GAP_LOOK_ANGLE = 1.05 # Cono de visión frontal del LiDAR (en radianes, ~60 grados a cada lado)
 
-    # ── CONFIGURACIÓN DE LOS 3 RANGOS DE ESTADO (Modifica los límites de zona) ──
-    DIST_SAFE     = 8.0      # Adelante despejado > 4.5m -> ZONA SEGURA (Acelera a fondo)
-    DIST_CAUTION  = 0.80      # Entre 1.8m y 4.5m -> ZONA DE CUIDADO (Velocidad de curvas)
-                             # Menos de 1.8m -> ZONA DE PELIGRO (Frenos + Escudo activo)
+    # ── CONFIGURACIÓN DE LOS 3 RANGOS DE ESTADO  ──
+    DIST_SAFE     = 8.0      # Adelante despejado -> ZONA SEGURA 
+    DIST_CAUTION  = 0.80     # Entre 0.80 y 8.0 m -> ZONA DE CUIDADO 
+                             # Menos de 0.80 m -> ZONA DE PELIGRO   
  
-    # ── ESCUDO ANTICHOQUE (Sólo se suma en la Zona de Peligro) ──
-    REPULSION_K   = 1.25     # Fuerza del empujón elástico para rebotar lejos de la pared si entra pasado
+    # ── ESCUDO ANTICHOQUE ──
+    REPULSION_K   = 1.25     # Fuerza del empujón 
     # ── VELOCIDADES ASIGNADAS A CADA ZONA ──   
     SPEED_MAX     = 8.0      # Velocidad objetivo en la Zona Segura (Rectas)
     SPEED_CORNER  = 4.5      # Velocidad objetivo en la Zona de Cuidado (Curvas normales)
     SPEED_DANGER  = 2.5      # Velocidad objetivo en la Zona de Peligro (Emergencias)
-    SPEED_BRAKE_K = 0.85     # Tasa de frenado (0.0 a 1.0). Más alto clava los frenos más rápido.
+    SPEED_BRAKE_K = 0.85     # Tasa de frenado  
  
 class UnifiedRacer(Node):
     def __init__(self):
@@ -74,24 +72,21 @@ class UnifiedRacer(Node):
         self.best_lap_time = float('inf')
         self.crossed_checkpoint = False  
         
-        self.get_logger().info("🏎️ CONTROLADOR DE 3 ESTADOS CON FOLLOW THE GAP CONTINUO LISTO")
+        self.get_logger().info("CONTROLADOR FOLLOW THE GAP 🏎️") 
 
     def on_odom(self, msg):
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         self.yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
-
-        # Seguimiento referencial de waypoints para desempate del gap
+        # Seguimiento referencial de waypoints  
         target_wp = self.wp_xy[self.wp_idx]
         dist_to_wp = math.hypot(target_wp[0] - self.x, target_wp[1] - self.y)
         if dist_to_wp < 3.5: 
             self.wp_idx = (self.wp_idx + 1) % self.n_wp
-
         # Lógica del Cronómetro en Meta Real
         if 20.0 < self.x < 25.0 and -26.0 < self.y < -20.0:
             self.crossed_checkpoint = True
-
         if -1.8 < self.x < 1.8 and -2.2 < self.y < 2.2:
             if self.crossed_checkpoint: 
                 current_time = time.time()
@@ -100,12 +95,10 @@ class UnifiedRacer(Node):
                     self.lap_count += 1
                     if lap_duration < self.best_lap_time:
                         self.best_lap_time = lap_duration
-                    
                     print(f"\n==========================================")
                     print(f"🏁 ¡VUELTA {self.lap_count} COMPLETADA!")
                     print(f"⏱️ Tiempo: {lap_duration:.3f} s | 🏆 Mejor: {self.best_lap_time:.3f} s")
                     print(f"==========================================\n")
-                
                 self.lap_start_time = current_time
                 self.crossed_checkpoint = False
             else:
@@ -118,14 +111,11 @@ class UnifiedRacer(Node):
         if self.angles is None:
             self.nr     = len(raw)
             self.angles = np.linspace(scan.angle_min, scan.angle_max, self.nr)
-
         r = np.clip(raw, 0.0, P.CLIP)
         r = np.where(np.isfinite(r), r, P.CLIP)
-
-        # 1. EVALUACIÓN CONTINUA DEL ENTORNO (Detectar en qué zona estamos)
+        # 1. EVALUACIÓN CONTINUA DEL ENTORNO
         # Cono frontal estrecho para medir espacio libre directo hacia adelante
         front_dist = float(np.mean(r[np.abs(self.angles) < 0.15]))
-
         # DETERMINACIÓN DEL ESTADO Y VELOCIDAD OBJETIVO
         if front_dist >= P.DIST_SAFE:
             target_speed = P.SPEED_MAX
@@ -137,7 +127,7 @@ class UnifiedRacer(Node):
             target_speed = P.SPEED_DANGER
             state = "PELIGRO"
 
-        # 2. EJECUCIÓN PERMANENTE DE FOLLOW THE GAP (Sabe siempre a dónde ir)
+        # 2. EJECUCIÓN DE FOLLOW THE GAP  
         wp = self.wp_xy[self.wp_idx]
         goal_angle = math.atan2(wp[1] - self.y, wp[0] - self.x) - self.yaw
         goal_angle = (goal_angle + math.pi) % (2 * math.pi) - math.pi
@@ -168,7 +158,7 @@ class UnifiedRacer(Node):
         repulsion_steer_offset = 0.0
 
         if state == "PELIGRO":
-            # ÚNICAMENTE en estado de peligro se activa el escudo elástico para forzar el esquive
+            # ÚNICAMENTE en estado de peligro se activa el escudo para forzar el esquive 
             active_mask = np.abs(self.angles) < 1.30
             active_indices = np.where(active_mask)[0]
 
@@ -179,7 +169,7 @@ class UnifiedRacer(Node):
                     force = P.REPULSION_K * ((P.DIST_CAUTION - dist_muro) / (dist_muro + 1e-3))
                     repulsion_steer_offset -= force * np.sign(angle) * math.cos(angle)
 
-        # Combinar el rumbo del Follow the Gap con el escudo (si está activo)
+        # Combinar el rumbo del Follow the Gap con el escudo 
         chosen_steer = gap_steer + repulsion_steer_offset
 
         # 4. FILTRADO FINAL Y SUAVIZADO
@@ -213,4 +203,4 @@ def main(args=None):
         rclpy.shutdown()
 
 if __name__ == '__main__':
-    main()
+    main() 

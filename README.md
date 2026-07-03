@@ -558,296 +558,137 @@ Publicación del comando Ackermann
 
 ---
 
-# Estructura del repositorio
-
-Una posible estructura para el repositorio es:
+## Estructura del repositorio
 
 ```text
-f1tenth-follow-the-gap/
+proyecto/
 ├── README.md
 ├── assets/
 │   └── controlador_hibrido_follow_the_gap.png
-├── src/
-│   └── follow_the_gap_controller.py
-├── package.xml
-├── setup.py
-├── setup.cfg
-└── resource/
+└── reactive_race/
+    ├── package.xml
+    ├── setup.py
+    ├── setup.cfg
+    ├── run_follower.sh
+    ├── resource/
+    │   └── reactive_race
+    ├── reactive_race/
+    │   ├── __init__.py
+    │   └── raceline_follower.py
+    └── test/
 ```
 
-Si el controlador se encuentra dentro de un workspace de ROS 2, la estructura puede ser:
+Los archivos principales son:
 
-```text
-f1tenth_ws/
-├── src/
-│   └── f1tenth_controller/
-│       ├── README.md
-│       ├── assets/
-│       │   └── controlador_hibrido_follow_the_gap.png
-│       ├── f1tenth_controller/
-│       │   ├── __init__.py
-│       │   └── follow_the_gap_controller.py
-│       ├── package.xml
-│       ├── setup.py
-│       └── setup.cfg
-├── build/
-├── install/
-└── log/
-```
+* `raceline_follower.py`: contiene el controlador Follow the Gap.
+* `setup.py`: registra el ejecutable del nodo.
+* `package.xml`: contiene las dependencias del paquete ROS 2.
+* `run_follower.sh`: permite iniciar el controlador mediante un script.
+* `assets/`: contiene las imágenes utilizadas en el README.
 
 ---
 
-# Requisitos
+## Requisitos
 
 Para ejecutar el controlador se necesita:
 
-* Ubuntu con ROS 2 instalado.
-* Simulador o vehículo F1TENTH configurado.
+* ROS 2.
 * Python 3.
 * NumPy.
-* Mensajes `sensor_msgs`.
-* Mensajes `nav_msgs`.
-* Mensajes `ackermann_msgs`.
-* Un tópico LiDAR disponible en `/scan`.
-* Un tópico de odometría disponible en `/ego_racecar/odom`.
-* Un controlador que reciba comandos en `/drive`.
+* Simulador o vehículo F1TENTH.
+* Paquete `ackermann_msgs`.
+* Tópico LiDAR `/scan`.
+* Tópico de odometría `/ego_racecar/odom`.
+* Tópico de control `/drive`.
 
 ---
 
-# Instalación
+## Instalación
 
-## 1. Crear un workspace
-
-```bash
-mkdir -p ~/f1tenth_ws/src
-cd ~/f1tenth_ws/src
-```
-
-## 2. Clonar el repositorio
+Clonar el repositorio:
 
 ```bash
-git clone <URL_DEL_REPOSITORIO>
+git clone https://github.com/jcgallo1/f1thent-Follow-the-gap.git
+cd f1thent-Follow-the-gap
 ```
 
-Ejemplo:
+Instalar las dependencias declaradas en el paquete:
 
 ```bash
-git clone https://github.com/usuario/f1tenth-follow-the-gap.git
+rosdep install --from-paths reactive_race --ignore-src -r -y
 ```
 
-## 3. Instalar dependencias
-
-Desde la raíz del workspace:
+Compilar el proyecto:
 
 ```bash
-cd ~/f1tenth_ws
-rosdep install --from-paths src --ignore-src -r -y
+colcon build --packages-select reactive_race --symlink-install
 ```
 
-Si NumPy no se encuentra instalado:
-
-```bash
-pip3 install numpy
-```
-
-## 4. Compilar el workspace
-
-```bash
-cd ~/f1tenth_ws
-colcon build --symlink-install
-```
-
-## 5. Cargar el entorno
+Cargar el entorno generado:
 
 ```bash
 source install/setup.bash
 ```
 
-Este comando debe ejecutarse en cada terminal nueva.
+---
 
-También puede agregarse al archivo `.bashrc`:
+## Instrucciones de ejecución
+
+Primero se debe iniciar el simulador F1TENTH.
+
+Después, en otra terminal, cargar el entorno de ROS 2 y el proyecto:
 
 ```bash
-echo "source ~/f1tenth_ws/install/setup.bash" >> ~/.bashrc
-source ~/.bashrc
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+```
+
+Ejecutar el controlador:
+
+```bash
+ros2 run reactive_race raceline_follower
+```
+
+En este comando:
+
+* `reactive_race` es el nombre del paquete.
+* `raceline_follower` es el nombre del ejecutable.
+* `raceline_follower.py` contiene el código del controlador.
+
+También se puede ejecutar mediante el script incluido en el proyecto:
+
+```bash
+chmod +x reactive_race/run_follower.sh
+./reactive_race/run_follower.sh
 ```
 
 ---
 
-# Instrucciones de ejecución
+## Tópicos utilizados
 
-## 1. Iniciar el simulador
+| Tópico              | Tipo de mensaje                            | Descripción                         |
+| ------------------- | ------------------------------------------ | ----------------------------------- |
+| `/scan`             | `sensor_msgs/msg/LaserScan`                | Lecturas del LiDAR                  |
+| `/ego_racecar/odom` | `nav_msgs/msg/Odometry`                    | Posición y orientación del vehículo |
+| `/drive`            | `ackermann_msgs/msg/AckermannDriveStamped` | Comandos de velocidad y dirección   |
 
-Primero debe ejecutarse el simulador F1TENTH o el entorno que publique los tópicos requeridos.
-
-El controlador espera recibir:
-
-```text
-/scan
-/ego_racecar/odom
-```
-
-Y publica comandos en:
-
-```text
-/drive
-```
-
-Se puede verificar que los tópicos estén disponibles mediante:
+Para comprobar que los tópicos se encuentran disponibles:
 
 ```bash
 ros2 topic list
 ```
 
----
-
-## 2. Verificar el LiDAR
-
-```bash
-ros2 topic echo /scan
-```
-
-También se puede revisar la frecuencia:
-
-```bash
-ros2 topic hz /scan
-```
-
----
-
-## 3. Verificar la odometría
-
-```bash
-ros2 topic echo /ego_racecar/odom
-```
-
----
-
-## 4. Ejecutar el controlador
-
-Desde una terminal con el workspace cargado:
-
-```bash
-cd ~/f1tenth_ws
-source install/setup.bash
-ros2 run f1tenth_controller follow_the_gap_controller
-```
-
-Donde:
-
-```text
-f1tenth_controller
-```
-
-es el nombre del paquete y:
-
-```text
-follow_the_gap_controller
-```
-
-es el nombre del ejecutable configurado en `setup.py`.
-
-Si el paquete o ejecutable tienen nombres diferentes, deben reemplazarse en el comando.
-
----
-
-## 5. Verificar los comandos publicados
+Para observar los comandos enviados por el controlador:
 
 ```bash
 ros2 topic echo /drive
 ```
 
-También puede revisarse la frecuencia de publicación:
-
-```bash
-ros2 topic hz /drive
-```
-
----
-
-# Ejecución directa con Python
-
-Si el archivo se ejecuta directamente y no como paquete ROS 2, primero debe tener permisos de ejecución.
-
-```bash
-chmod +x follow_the_gap_controller.py
-```
-
-Después se puede ejecutar mediante:
-
-```bash
-python3 follow_the_gap_controller.py
-```
-
-Sin embargo, la forma recomendada dentro de ROS 2 es:
-
-```bash
-ros2 run f1tenth_controller follow_the_gap_controller
-```
-
----
-
-# Tópicos utilizados
-
-| Tópico              | Tipo de mensaje                            | Función                |
-| ------------------- | ------------------------------------------ | ---------------------- |
-| `/scan`             | `sensor_msgs/msg/LaserScan`                | Lecturas del LiDAR     |
-| `/ego_racecar/odom` | `nav_msgs/msg/Odometry`                    | Posición y orientación |
-| `/drive`            | `ackermann_msgs/msg/AckermannDriveStamped` | Dirección y velocidad  |
-
----
-
-# Mensaje de salida
-
-El controlador publica mensajes del tipo:
+El nodo puede detenerse con:
 
 ```text
-ackermann_msgs/msg/AckermannDriveStamped
+Ctrl + C
 ```
-
-Los campos principales son:
-
-```python
-msg.drive.steering_angle
-msg.drive.speed
-```
-
-* `steering_angle`: ángulo de dirección en radianes.
-* `speed`: velocidad objetivo del vehículo.
-
----
-
-# Ajuste de parámetros
-
-Los parámetros pueden modificarse dentro de la clase `P`.
-
-Por ejemplo, para reducir la velocidad máxima:
-
-```python
-SPEED_MAX = 6.0
-```
-
-Para crear una burbuja de seguridad más grande:
-
-```python
-BUBBLE_R = 1.10
-```
-
-Para considerar libres únicamente los espacios con más distancia:
-
-```python
-SAFE_GAP_DIST = 6.0
-```
-
-Para hacer la dirección más suave:
-
-```python
-STEER_SMOOTH = 0.50
-```
-
-Debe tenerse en cuenta que un valor alto de `STEER_SMOOTH` hace que el vehículo conserve durante más tiempo la dirección anterior.
-
----
 
 # Posibles problemas
 
@@ -892,54 +733,7 @@ Comprobar que la odometría se publique correctamente:
 ```bash
 ros2 topic echo /ego_racecar/odom
 ```
-
-También se puede aumentar temporalmente la distancia de aceptación:
-
-```python
-if dist_to_wp < 4.0:
-```
-
----
-
-## El vehículo gira de forma brusca
-
-Se puede aumentar:
-
-```python
-STEER_SMOOTH
-```
-
-Por ejemplo:
-
-```python
-STEER_SMOOTH = 0.40
-```
-
----
-
-## El vehículo pasa muy cerca de las paredes
-
-Se puede aumentar:
-
-```python
-BUBBLE_R
-```
-
-o reducir:
-
-```python
-DIST_CAUTION
-```
-
-También puede aumentarse la fuerza de repulsión:
-
-```python
-REPULSION_K
-```
-
-Los cambios deben realizarse gradualmente para evitar oscilaciones.
-
----
+--- 
 
 # Conclusión
 

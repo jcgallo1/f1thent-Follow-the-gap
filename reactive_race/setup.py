@@ -23,10 +23,7 @@ setup(
         ],
     },
     entry_points={
-        'console_scripts': [
-            'reactive_node = reactive_race.reactive_node:main',
-            'waypoint_recorder = reactive_race.waypoint_recorder:main', 
-            'manual_driver = reactive_race.manual_driver:main',
+        'console_scripts': [ 
             'raceline_follower = reactive_race.raceline_follower:main',  
          
         ], 

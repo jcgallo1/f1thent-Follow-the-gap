@@ -1,15 +1,7 @@
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/1vuelta.py
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/waypoint_recorder.py
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/raceline_follower.py
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__init__.py
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/manual_driver.py
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/reactive_node.py
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__pycache__/1vuelta.cpython-310.pyc
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__pycache__/waypoint_recorder.cpython-310.pyc
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__pycache__/raceline_follower.cpython-310.pyc
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__pycache__/__init__.cpython-310.pyc
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__pycache__/manual_driver.cpython-310.pyc
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race/__pycache__/reactive_node.cpython-310.pyc
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/share/ament_index/resource_index/packages/reactive_race
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/share/reactive_race/package.xml
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race-0.0.0-py3.10.egg-info/entry_points.txt
@@ -19,7 +11,4 @@
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race-0.0.0-py3.10.egg-info/top_level.txt
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race-0.0.0-py3.10.egg-info/PKG-INFO
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/python3.10/site-packages/reactive_race-0.0.0-py3.10.egg-info/requires.txt
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/reactive_race/manual_driver
 /home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/reactive_race/raceline_follower
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/reactive_race/reactive_node
-/home/juangallo/Escritorio/vehicle_nt/proyecto_1erParte/install/reactive_race/lib/reactive_race/waypoint_recorder
