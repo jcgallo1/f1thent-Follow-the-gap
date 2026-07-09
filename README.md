@@ -1,630 +1,493 @@
-# Controlador Reactivo F1TENTH
+# F1TENTH Hybrid Reactive Controller (ROS2)
 
-## Follow the Gap con Waypoints y Rangos de Estado
+Controlador híbrido para vehículos autónomos F1TENTH desarrollado en **ROS2**, que combina navegación mediante **Waypoints**, **Follow the Gap** y **Follow Wall Assist** para completar un circuito de manera autónoma, rápida y segura.
 
-Este proyecto implementa un controlador reactivo para un vehículo autónomo F1TENTH utilizando ROS 2.
-
-El controlador combina tres elementos principales:
-
-* **Follow the Gap**, para detectar espacios libres mediante el LiDAR y evitar obstáculos.
-* **Waypoints**, para orientar al vehículo hacia la ruta correcta del circuito.
-* **Rangos de estado**, para modificar la velocidad y activar un mecanismo de repulsión cuando el vehículo se encuentra demasiado cerca de un obstáculo.
-
-El objetivo es permitir que el vehículo recorra el circuito de manera autónoma, manteniendo una trayectoria segura y reduciendo la velocidad cuando detecta condiciones de riesgo.
+El proyecto fue desarrollado como una mejora al algoritmo clásico **Follow the Gap**, incorporando navegación basada en objetivos (Waypoints), control adaptativo de velocidad y asistencia de seguimiento de paredes para aumentar la estabilidad en escenarios con obstáculos.
 
 ---
 
-## Diagrama del controlador
+# Objetivo
 
-La siguiente imagen representa el funcionamiento general del controlador:
+El objetivo principal del controlador es completar una vuelta al circuito siguiendo una trayectoria óptima previamente definida mediante waypoints.
 
-![Controlador Follow the Gap con Waypoints y Rangos de Estado](assets/controlador_hibrido_follow_the_gap.png)
+A diferencia de un algoritmo puramente reactivo, el vehículo no decide su trayectoria únicamente observando el LiDAR. En este proyecto existe una trayectoria objetivo, y únicamente cuando dicha trayectoria se encuentra bloqueada el vehículo cambia temporalmente a un comportamiento reactivo para evitar obstáculos.
 
-El sistema utiliza las lecturas del LiDAR para encontrar un espacio libre, mientras que el waypoint actual sirve como referencia para elegir la dirección que más se aproxima a la ruta del circuito.
-
-Los estados no reemplazan al algoritmo Follow the Gap. Su función es regular la velocidad y activar la repulsión de emergencia.
+De esta manera se consigue un comportamiento más natural, estable y eficiente.
 
 ---
 
-## Descripción del enfoque utilizado
+# Problema
 
-### Follow the Gap
+Existen dos enfoques ampliamente utilizados en F1TENTH.
 
-Follow the Gap es un algoritmo de navegación reactiva que utiliza las mediciones del LiDAR para determinar hacia dónde debe girar el vehículo.
+## Follow the Gap
 
-El procedimiento general es el siguiente:
+Follow the Gap analiza el LiDAR y selecciona continuamente el hueco libre más amplio para avanzar.
 
-1. Recibir las distancias medidas por el LiDAR.
-2. Limitar las lecturas a un rango máximo.
-3. Analizar únicamente el cono frontal del vehículo.
-4. Detectar el obstáculo más cercano.
-5. Crear una burbuja de seguridad alrededor del obstáculo.
-6. Buscar los rayos que representan espacios suficientemente libres.
-7. Elegir una dirección segura.
-8. Publicar el ángulo de dirección y la velocidad.
+Su principal ventaja es que evita obstáculos de forma muy eficiente.
 
-A diferencia de un controlador basado únicamente en waypoints, Follow the Gap permite reaccionar directamente ante obstáculos y paredes cercanas.
+Sin embargo, presenta varias limitaciones:
+
+- No conoce la pista.
+- Puede escoger trayectorias poco eficientes.
+- En curvas puede desviarse innecesariamente.
+- Cambia constantemente de dirección dependiendo del LiDAR.
 
 ---
 
-## Uso de waypoints
+## Navegación mediante Waypoints
 
-El circuito se representa mediante una lista de coordenadas:
+La navegación por waypoints consiste en definir una secuencia de coordenadas que representan la trayectoria ideal del circuito.
 
-```python
-WAYPOINTS = [
-    (-0.10, -0.50),
-    (5.71, -21.61),
-    (8.06, -25.40),
-    ...
-]
-```
+El vehículo únicamente intenta llegar al siguiente waypoint.
 
-Cada waypoint contiene una posición global:
+Su principal ventaja es que mantiene una trayectoria muy eficiente.
 
-```text
-(x, y)
-```
+No obstante, tiene un inconveniente importante:
 
-La odometría permite conocer la posición actual del vehículo. A partir de esa posición se calcula el ángulo hacia el waypoint activo.
-
-```python
-goal_angle = math.atan2(
-    wp[1] - self.y,
-    wp[0] - self.x
-) - self.yaw
-```
-
-Este ángulo no se utiliza directamente como comando de dirección.
-
-Su función es orientar la elección realizada por Follow the Gap. Entre todos los rayos considerados seguros, el controlador selecciona el que se encuentre más cerca del ángulo del waypoint.
-
-```python
-gap_steer = float(
-    self.angles[
-        free_indices[
-            np.argmin(
-                np.abs(
-                    self.angles[free_indices] - goal_angle
-                )
-            )
-        ]
-    ]
-)
-```
-
-De esta manera:
-
-* El LiDAR determina qué direcciones son seguras.
-* Los waypoints indican qué dirección conviene seguir.
-* Follow the Gap continúa siendo el responsable principal de evitar obstáculos.
-
-Cuando el vehículo se encuentra a menos de `3.5 metros` del waypoint actual, el controlador avanza al siguiente.
-
-```python
-if dist_to_wp < 3.5:
-    self.wp_idx = (self.wp_idx + 1) % self.n_wp
-```
-
-El operador módulo permite regresar al primer waypoint después de alcanzar el último.
+Si aparece un obstáculo inesperado, el vehículo continuará intentando llegar al waypoint aunque exista riesgo de colisión.
 
 ---
 
-## Rangos de estado
+## Solución propuesta
 
-El controlador utiliza la distancia frontal media para clasificar el entorno en tres estados.
+Este proyecto combina ambos enfoques.
 
-La distancia se calcula utilizando un pequeño cono frontal:
+Los **Waypoints** representan el objetivo principal.
 
-```python
-front_dist = float(
-    np.mean(
-        r[np.abs(self.angles) < 0.15]
-    )
-)
-```
+**Follow the Gap** solamente se activa cuando el camino hacia dicho objetivo se encuentra bloqueado.
 
-Los estados son los siguientes:
+Finalmente, **Follow Wall Assist** ayuda a estabilizar el vehículo cuando circula muy cerca de una pared durante una maniobra evasiva.
 
-| Estado  |                      Condición | Velocidad objetivo | Repulsión   |
-| ------- | -----------------------------: | -----------------: | ----------- |
-| Segura  |          `front_dist >= 8.0 m` |          `8.0 m/s` | Desactivada |
-| Cuidado | `0.80 m <= front_dist < 8.0 m` |          `4.5 m/s` | Desactivada |
-| Peligro |          `front_dist < 0.80 m` |          `2.5 m/s` | Activada    |
-
-La selección se realiza mediante:
-
-```python
-if front_dist >= P.DIST_SAFE:
-    target_speed = P.SPEED_MAX
-    state = "SEGURA"
-
-elif P.DIST_CAUTION <= front_dist < P.DIST_SAFE:
-    target_speed = P.SPEED_CORNER
-    state = "CUIDADO"
-
-else:
-    target_speed = P.SPEED_DANGER
-    state = "PELIGRO"
-```
-
-Follow the Gap permanece activo en los tres estados.
-
-Los estados modifican únicamente:
-
-* La velocidad objetivo.
-* La activación del escudo de repulsión.
+De esta forma se obtiene un controlador híbrido que mantiene la trayectoria ideal siempre que sea posible y únicamente modifica su comportamiento cuando es realmente necesario.
 
 ---
 
-## Burbuja de seguridad
+# Arquitectura general
 
-El algoritmo busca el punto más cercano detectado por el LiDAR dentro del cono de conducción.
+La siguiente imagen resume el comportamiento implementado durante una vuelta completa del circuito.
 
-```python
-closest_idx = int(
-    np.argmin(
-        np.where(
-            driving_mask,
-            proc_lidar,
-            P.CLIP
-        )
-    )
-)
-```
+![Arquitectura del controlador](assets/referenciaProyecto.png)
 
-Si el obstáculo se encuentra a menos de `3 metros`, se crea una burbuja de seguridad.
+La idea general es sencilla:
 
-```python
-if closest_dist < 3.0:
-```
+1. El vehículo identifica el siguiente waypoint.
+2. El LiDAR analiza el camino hacia dicho waypoint.
+3. Si el camino está libre continúa normalmente.
+4. Si existe un obstáculo se activa Follow the Gap.
+5. Si además existe una pared cercana se activa Follow Wall Assist.
+6. Una vez superado el obstáculo el controlador vuelve automáticamente al seguimiento de waypoints.
 
-El radio físico de la burbuja se convierte en un ancho angular:
-
-```python
-b_half = math.atan2(
-    P.BUBBLE_R,
-    max(closest_dist, 0.1)
-)
-```
-
-Después se eliminan temporalmente los rayos cercanos al obstáculo:
-
-```python
-proc_lidar[
-    max(0, closest_idx - b_idx):
-    min(self.nr, closest_idx + b_idx + 1)
-] = 0.0
-```
-
-Esto evita que Follow the Gap seleccione una trayectoria que pase demasiado cerca de una pared.
+Todo este proceso ocurre continuamente durante cada iteración del nodo de ROS2.
 
 ---
 
-## Selección del espacio libre
+# Funcionamiento del controlador
 
-Un rayo se considera libre cuando su distancia es mayor o igual a:
+El controlador se ejecuta como un nodo de ROS2 llamado:
 
-```python
-SAFE_GAP_DIST = 5.0
+```
+unified_hybrid_racer
 ```
 
-La máscara de espacios libres se calcula mediante:
+Este nodo recibe información de:
 
-```python
-free_rays = proc_lidar >= P.SAFE_GAP_DIST
+- `/scan` (LaserScan)
+- `/ego_racecar/odom` (Odometry)
+
+y publica los comandos de conducción mediante:
+
+```
+/drive
 ```
 
-Si existen rayos libres, se elige el que se encuentre más cerca del ángulo del waypoint.
-
-Si ningún rayo alcanza la distancia mínima, se selecciona el rayo con la mayor distancia disponible.
-
-```python
-if not np.any(free_rays):
-    gap_steer = float(
-        self.angles[np.argmax(proc_lidar)]
-    )
-```
-
-Esto permite que el vehículo continúe buscando la salida más segura incluso cuando el espacio es reducido.
+En cada iteración realiza el siguiente proceso.
 
 ---
 
-## Escudo de repulsión
+## Paso 1. Lectura de sensores
 
-Cuando el vehículo entra en el estado `PELIGRO`, se activa una corrección adicional de dirección.
+El controlador obtiene continuamente dos fuentes principales de información.
 
-```python
-if state == "PELIGRO":
-```
+### LiDAR
 
-El controlador analiza los obstáculos dentro de un sector frontal de aproximadamente ±74 grados.
+El LiDAR proporciona la distancia a los obstáculos alrededor del vehículo.
 
-```python
-active_mask = np.abs(self.angles) < 1.30
-```
+Toda la toma de decisiones depende de esta información.
 
-Cada obstáculo que se encuentra a menos de `0.80 metros` genera una fuerza de repulsión.
+Con el LiDAR el vehículo puede determinar:
 
-```python
-force = P.REPULSION_K * (
-    (P.DIST_CAUTION - dist_muro) /
-    (dist_muro + 1e-3)
-)
-```
-
-La fuerza aumenta cuando la distancia disminuye.
-
-El signo del ángulo permite determinar hacia qué lado debe girar el vehículo:
-
-```python
-repulsion_steer_offset -= (
-    force *
-    np.sign(angle) *
-    math.cos(angle)
-)
-```
-
-Por ejemplo:
-
-* Un obstáculo a la izquierda genera un giro hacia la derecha.
-* Un obstáculo a la derecha genera un giro hacia la izquierda.
-
-La dirección final combina Follow the Gap y la repulsión:
-
-```python
-chosen_steer = (
-    gap_steer +
-    repulsion_steer_offset
-)
-```
+- espacio libre
+- obstáculos
+- paredes
+- distancia frontal
+- distancia lateral
 
 ---
 
-## Suavizado de dirección
+### Odometría
 
-El ángulo de dirección se limita al rango físico permitido:
+La odometría proporciona:
 
-```python
-chosen_steer = float(
-    np.clip(
-        chosen_steer,
-        -P.MAX_STEER,
-        P.MAX_STEER
-    )
-)
-```
+- posición X
+- posición Y
+- orientación (Yaw)
 
-El límite configurado es:
-
-```python
-MAX_STEER = 0.41
-```
-
-Esto equivale aproximadamente a 24 grados.
-
-Posteriormente se aplica un filtro para evitar cambios instantáneos de dirección:
-
-```python
-steer = (
-    P.STEER_SMOOTH * self.prev_steer +
-    (1.0 - P.STEER_SMOOTH) * chosen_steer
-)
-```
-
-La dirección anterior se almacena para utilizarla en el siguiente ciclo.
+Estos datos permiten conocer exactamente dónde se encuentra el vehículo dentro del circuito.
 
 ---
 
-## Control de velocidad
+## Paso 2. Selección del siguiente Waypoint
 
-La velocidad depende del estado actual.
+Los waypoints representan la trayectoria ideal del circuito.
 
-Cuando el vehículo debe reducir la velocidad, se aplica una transición rápida:
+El controlador mantiene una lista ordenada de coordenadas.
 
-```python
-speed = (
-    (1.0 - P.SPEED_BRAKE_K) * self.prev_speed +
-    P.SPEED_BRAKE_K * target_speed
-)
+Cada waypoint posee la forma:
+
+```
+(x,y)
 ```
 
-Cuando debe acelerar, se utiliza una interpolación hacia la nueva velocidad objetivo:
+Durante toda la carrera el vehículo intenta alcanzar el waypoint actual.
 
-```python
-speed = (
-    0.20 * self.prev_speed +
-    0.80 * target_speed
-)
-```
+Cuando la distancia al waypoint es menor a aproximadamente **3.5 metros**, automáticamente cambia al siguiente.
 
-Finalmente, la velocidad calculada se almacena:
-
-```python
-self.prev_speed = speed
-```
+Esto permite recorrer el circuito completo de forma continua.
 
 ---
 
-## Cronómetro de vueltas
+## Paso 3. Calcular la dirección objetivo
 
-El controlador también incluye un sistema de telemetría para contar y medir las vueltas.
+Una vez conocido el waypoint actual, el controlador calcula el ángulo necesario para llegar hasta él.
 
-Se utiliza una zona intermedia del circuito como checkpoint:
+Esta operación se realiza mediante la función:
 
-```python
-if 20.0 < self.x < 25.0 and -26.0 < self.y < -20.0:
-    self.crossed_checkpoint = True
+```
+compute_goal_angle()
 ```
 
-La zona cercana al origen se utiliza como meta:
+El resultado representa la dirección ideal del vehículo.
 
-```python
-if -1.8 < self.x < 1.8 and -2.2 < self.y < 2.2:
-```
-
-Una vuelta se registra solamente cuando:
-
-1. El vehículo pasa por el checkpoint.
-2. El vehículo regresa a la zona de meta.
-
-Esto evita que se registren varias vueltas mientras el vehículo permanece cerca del punto inicial.
-
-El controlador muestra:
-
-* Número de vuelta.
-* Tiempo de la vuelta.
-* Mejor tiempo registrado.
-
-Ejemplo:
-
-```text
-==========================================
-🏁 ¡VUELTA 2 COMPLETADA!
-⏱️ Tiempo: 34.821 s | 🏆 Mejor: 33.905 s
-==========================================
-```
+Si no existieran obstáculos, ésta sería exactamente la dirección utilizada para conducir.
 
 ---
 
-# Estructura del código
+## Paso 4. Analizar el camino
 
-El archivo principal se organiza en los siguientes bloques.
+Antes de girar hacia el waypoint, el LiDAR analiza si realmente existe un camino libre.
 
-## 1. Importaciones
+Para ello se revisan principalmente dos regiones.
 
-```python
-import rclpy
-from rclpy.node import Node
-import numpy as np
-from sensor_msgs.msg import LaserScan
-from ackermann_msgs.msg import AckermannDriveStamped
-from nav_msgs.msg import Odometry
-import math
-import time
-```
+### Zona frontal
 
-Estas librerías permiten trabajar con:
-
-* ROS 2.
-* LiDAR.
-* Odometría.
-* Comandos Ackermann.
-* Operaciones matemáticas.
-* Arreglos NumPy.
-* Cronometraje.
+Determina la distancia libre justo delante del vehículo.
 
 ---
 
-## 2. Lista de waypoints
+### Zona del waypoint
 
-```python
-WAYPOINTS = [
-    ...
-]
-```
+Analiza únicamente la región donde se encuentra el waypoint.
 
-Contiene las coordenadas utilizadas como referencia global de navegación.
+De esta forma el controlador responde la siguiente pregunta:
+
+**¿Existe un camino libre hacia el objetivo?**
 
 ---
 
-## 3. Clase de parámetros
+## Paso 5. Determinar el estado del entorno
 
-```python
-class P:
-```
+Dependiendo de la distancia detectada por el LiDAR, el controlador clasifica el entorno en cuatro estados.
 
-Contiene los valores configurables del controlador.
+| Estado | Distancia | Comportamiento |
+|----------|------------|----------------|
+| SAFE | > 4.5 m | Velocidad máxima |
+| CAUTION | 1.5 – 4.5 m | Reduce velocidad |
+| AVOID | Camino bloqueado | Activa Follow the Gap |
+| DANGER | < 1.35 m | Máxima protección |
 
-### Parámetros principales
-
-| Parámetro            |  Valor | Descripción                          |
-| -------------------- | -----: | ------------------------------------ |
-| `CLIP`               | `10.0` | Distancia máxima procesada del LiDAR |
-| `MAX_STEER`          | `0.41` | Ángulo máximo de dirección           |
-| `STEER_SMOOTH`       | `0.15` | Suavizado de dirección               |
-| `SAFE_GAP_DIST`      |  `5.0` | Distancia mínima de un espacio libre |
-| `BUBBLE_R`           | `0.90` | Radio de la burbuja de seguridad     |
-| `MAX_GAP_LOOK_ANGLE` | `1.05` | Cono frontal analizado               |
-| `DIST_SAFE`          |  `8.0` | Límite del estado seguro             |
-| `DIST_CAUTION`       | `0.80` | Límite del estado de peligro         |
-| `REPULSION_K`        | `1.25` | Intensidad de la repulsión           |
-| `SPEED_MAX`          |  `8.0` | Velocidad en estado seguro           |
-| `SPEED_CORNER`       |  `4.5` | Velocidad en estado de cuidado       |
-| `SPEED_DANGER`       |  `2.5` | Velocidad en estado de peligro       |
-| `SPEED_BRAKE_K`      | `0.85` | Tasa de reducción de velocidad       |
+Estos estados permiten adaptar automáticamente la velocidad y el comportamiento del vehículo.
 
 ---
 
-## 4. Clase principal
+# Navegación por Waypoints
 
-```python
-class UnifiedRacer(Node):
-```
+Este es el modo principal del controlador.
 
-Representa el nodo de ROS 2.
+Mientras el camino permanezca libre:
 
-La clase contiene tres métodos principales:
+- no busca huecos
+- no sigue paredes
+- únicamente conduce hacia el waypoint
 
-### `__init__()`
-
-Inicializa:
-
-* Publicador de comandos.
-* Suscripción al LiDAR.
-* Suscripción a la odometría.
-* Waypoints.
-* Variables de dirección y velocidad.
-* Variables de telemetría.
-
-### `on_odom()`
-
-Procesa la odometría y actualiza:
-
-* Posición `x`.
-* Posición `y`.
-* Orientación `yaw`.
-* Waypoint activo.
-* Checkpoint.
-* Cronómetro de vueltas.
-
-### `on_scan()`
-
-Procesa el LiDAR y realiza:
-
-* Limpieza de lecturas.
-* Evaluación del estado.
-* Aplicación de Follow the Gap.
-* Cálculo del rumbo hacia el waypoint.
-* Creación de la burbuja.
-* Selección del espacio libre.
-* Aplicación de repulsión.
-* Suavizado.
-* Publicación de dirección y velocidad.
+Este comportamiento produce una trayectoria mucho más estable que un algoritmo completamente reactivo.
 
 ---
 
-## 5. Función principal
+# Follow the Gap
 
-```python
-def main(args=None):
+Cuando el LiDAR detecta que el camino hacia el waypoint está bloqueado, el controlador cambia automáticamente al modo **AVOID**.
+
+En este momento comienza el algoritmo Follow the Gap.
+
+Su funcionamiento consta de cuatro etapas.
+
+---
+
+## 1. Crear una burbuja
+
+El obstáculo más cercano se rodea mediante una burbuja virtual.
+
+Todos los rayos del LiDAR contenidos dentro de esa burbuja son descartados.
+
+Esto evita que el vehículo intente atravesar el obstáculo.
+
+---
+
+## 2. Buscar huecos
+
+Una vez eliminada la zona ocupada por el obstáculo, el algoritmo analiza todos los espacios libres restantes.
+
+Cada conjunto continuo de rayos libres se considera un posible camino.
+
+---
+
+## 3. Evaluar cada hueco
+
+No todos los huecos son igualmente buenos.
+
+Cada uno recibe una puntuación considerando varios criterios.
+
+Entre ellos:
+
+- cercanía al waypoint
+- distancia disponible
+- posición dentro del hueco
+- continuidad respecto a la dirección anterior
+
+Gracias a esto el vehículo evita cambios bruscos de dirección.
+
+---
+
+## 4. Seleccionar el mejor hueco
+
+Finalmente se escoge el hueco con mayor puntuación.
+
+La dirección del vehículo cambia hacia dicho hueco hasta que el camino vuelve a quedar libre.
+
+---
+
+# Follow Wall Assist
+
+Durante algunas maniobras evasivas el vehículo circula muy cerca de una pared.
+
+En estas situaciones únicamente seguir el hueco puede producir pequeñas oscilaciones.
+
+Para solucionarlo se implementó un asistente de seguimiento de pared.
+
+Este módulo:
+
+- utiliza mediciones laterales del LiDAR
+- estima la distancia al muro
+- calcula una pequeña corrección en el volante
+
+Es importante destacar que este módulo **no conduce el vehículo**.
+
+Únicamente añade una pequeña corrección para estabilizar la trayectoria.
+
+---
+
+# Control adaptativo de velocidad
+
+La velocidad depende directamente del espacio libre detectado por el LiDAR.
+
+Cuando el camino está completamente despejado:
+
+- velocidad máxima
+
+Cuando aparecen obstáculos:
+
+- velocidad media
+
+Cuando el riesgo aumenta:
+
+- velocidad baja
+
+Cuando existe riesgo de colisión:
+
+- velocidad mínima
+
+Esto permite que el vehículo sea rápido cuando el entorno es seguro y conservador únicamente cuando es necesario.
+
+---
+
+# Flujo completo del algoritmo
+
+Durante cada iteración del nodo ocurre exactamente el siguiente proceso.
+
+```
+Inicio
+
+↓
+
+Leer LiDAR
+
+↓
+
+Leer odometría
+
+↓
+
+Calcular siguiente waypoint
+
+↓
+
+Calcular ángulo hacia el waypoint
+
+↓
+
+Analizar camino frontal
+
+↓
+
+¿Camino libre?
+
+├── Sí
+│
+│   Seguir Waypoint
+│
+└── No
+    │
+    Aplicar burbuja
+    │
+    Buscar huecos
+    │
+    Seleccionar mejor hueco
+    │
+    Aplicar Follow Wall Assist (si es necesario)
+
+↓
+
+Calcular velocidad
+
+↓
+
+Publicar AckermannDrive
+
+↓
+
+Repetir
 ```
 
-Inicializa ROS 2, crea el nodo y mantiene su ejecución.
+Todo este proceso ocurre continuamente mientras el simulador está en ejecución.
 
-```python
-rclpy.spin(node)
+---
+
+# Organización del proyecto
+
 ```
+reactive_race/
 
-El nodo se detiene correctamente al presionar:
-
-```text
-Ctrl + C
+├── reactive_race/
+│
+│   ├── raceline_follower.py
+│   ├── raceline_obs.py
+│   └── ...
+│
+├── package.xml
+├── setup.py
+├── setup.cfg
+├── run_follower.sh
+└── README.md
 ```
 
 ---
 
-# Flujo completo del controlador
+## raceline_follower.py
 
-El funcionamiento puede resumirse de la siguiente manera:
+Es el controlador principal del vehículo.
 
-```text
-Lectura del LiDAR
-        ↓
-Limpieza y limitación de distancias
-        ↓
-Evaluación de distancia frontal
-        ↓
-Selección de estado
-        ↓
-Cálculo del ángulo hacia el waypoint
-        ↓
-Selección del cono frontal
-        ↓
-Detección del obstáculo más cercano
-        ↓
-Creación de burbuja de seguridad
-        ↓
-Búsqueda de espacios libres
-        ↓
-Selección del gap más cercano al waypoint
-        ↓
-Repulsión si el estado es PELIGRO
-        ↓
-Suavizado de dirección y velocidad
-        ↓
-Publicación del comando Ackermann
+Implementa:
+
+- lectura del LiDAR
+- lectura de odometría
+- seguimiento de waypoints
+- Follow the Gap
+- Follow Wall Assist
+- control de velocidad
+- control de dirección
+- cronómetro de vueltas
+- publicación de comandos Ackermann
+
+---
+
+## raceline_obs.py
+
+Controla el segundo robot utilizado como obstáculo dinámico durante las pruebas.
+
+Su objetivo es generar escenarios donde el controlador deba reaccionar ante tráfico en movimiento.
+
+---
+
+## setup.py
+
+Registra ambos nodos para ROS2.
+
+```python
+'raceline_follower = reactive_race.raceline_follower:main',
+'raceline_obs = reactive_race.raceline_obs:main',
 ```
 
 ---
 
-## Estructura del repositorio
+# Instrucciones de instalación y ejecución
 
-```text
-proyecto/
-├── README.md
-├── assets/
-│   └── controlador_hibrido_follow_the_gap.png
-└── reactive_race/
-    ├── package.xml
-    ├── setup.py
-    ├── setup.cfg
-    ├── run_follower.sh
-    ├── resource/
-    │   └── reactive_race
-    ├── reactive_race/
-    │   ├── __init__.py
-    │   └── raceline_follower.py
-    └── test/
+## 1. Copiar el mapa
+
+Dentro del repositorio se encuentra la carpeta:
+
+```
+Mapa/
+
+SaoPaulo_mapObs.png
+SaoPaulo_mapObs.yaml
 ```
 
-Los archivos principales son:
-
-* `raceline_follower.py`: contiene el controlador Follow the Gap.
-* `setup.py`: registra el ejecutable del nodo.
-* `package.xml`: contiene las dependencias del paquete ROS 2.
-* `run_follower.sh`: permite iniciar el controlador mediante un script.
-* `assets/`: contiene las imágenes utilizadas en el README.
+Copiar ambos archivos al directorio de mapas utilizado por el simulador F1TENTH.
 
 ---
 
-## Requisitos
+## 2. Configurar el Launch
 
-Para ejecutar el controlador se necesita:
+Modificar el archivo de lanzamiento correspondiente para:
 
-* ROS 2.
-* Python 3.
-* NumPy.
-* Simulador o vehículo F1TENTH.
-* Paquete `ackermann_msgs`.
-* Tópico LiDAR `/scan`.
-* Tópico de odometría `/ego_racecar/odom`.
-* Tópico de control `/drive`.
+- actualizar la ruta (`path`) del nuevo mapa.
+- seleccionar `SaoPaulo_mapObs.yaml`.
+- agregar un segundo robot que actuará como obstáculo dinámico.
 
 ---
 
-## Instalación
+## 3. Verificar los ejecutables
 
-Clonar el repositorio:
+En `setup.py` deben existir los siguientes entry points:
+
+```python
+'raceline_follower = reactive_race.raceline_follower:main',
+
+'raceline_obs = reactive_race.raceline_obs:main',
+```
+
+---
+
+## 4. Compilar el paquete
 
 ```bash
-git clone https://github.com/jcgallo1/f1thent-Follow-the-gap.git
-cd f1thent-Follow-the-gap
+colcon build
 ```
 
-Instalar las dependencias declaradas en el paquete:
+---
 
-```bash
-rosdep install --from-paths reactive_race --ignore-src -r -y
-```
-
-Compilar el proyecto:
-
-```bash
-colcon build --packages-select reactive_race --symlink-install
-```
-
-Cargar el entorno generado:
+## 5. Cargar el workspace
 
 ```bash
 source install/setup.bash
@@ -632,122 +495,44 @@ source install/setup.bash
 
 ---
 
-## Instrucciones de ejecución
+## 6. Ejecutar el simulador
 
-Primero se debe iniciar el simulador F1TENTH.
+Iniciar el simulador F1TENTH utilizando el mapa configurado previamente.
 
-Después, en otra terminal, cargar el entorno de ROS 2 y el proyecto:
+---
 
-```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-```
-
-Ejecutar el controlador:
+## 7. Ejecutar el vehículo principal
 
 ```bash
 ros2 run reactive_race raceline_follower
 ```
+ 
+---
 
-En este comando:
+## 8. Ejecutar el robot dinámico
 
-* `reactive_race` es el nombre del paquete.
-* `raceline_follower` es el nombre del ejecutable.
-* `raceline_follower.py` contiene el código del controlador.
-
-También se puede ejecutar mediante el script incluido en el proyecto:
+En otra terminal ejecutar:
 
 ```bash
-chmod +x reactive_race/run_follower.sh
-./reactive_race/run_follower.sh
+ros2 run reactive_race raceline_obs
 ```
 
 ---
 
-## Tópicos utilizados
+# Tecnologías utilizadas
 
-| Tópico              | Tipo de mensaje                            | Descripción                         |
-| ------------------- | ------------------------------------------ | ----------------------------------- |
-| `/scan`             | `sensor_msgs/msg/LaserScan`                | Lecturas del LiDAR                  |
-| `/ego_racecar/odom` | `nav_msgs/msg/Odometry`                    | Posición y orientación del vehículo |
-| `/drive`            | `ackermann_msgs/msg/AckermannDriveStamped` | Comandos de velocidad y dirección   |
-
-Para comprobar que los tópicos se encuentran disponibles:
-
-```bash
-ros2 topic list
-```
-
-Para observar los comandos enviados por el controlador:
-
-```bash
-ros2 topic echo /drive
-```
-
-El nodo puede detenerse con:
-
-```text
-Ctrl + C
-```
-
-# Posibles problemas
-
-## El vehículo no se mueve
-
-Verificar que el controlador publique en `/drive`:
-
-```bash
-ros2 topic echo /drive
-```
-
-También se debe confirmar que el simulador utilice el mismo tópico.
+- ROS2
+- Python
+- NumPy
+- F1TENTH Simulator
+- Ackermann Steering
+- LaserScan
+- Odometry
 
 ---
 
-## El controlador no recibe LiDAR
+# Conclusiones
 
-Verificar:
+El controlador desarrollado combina las ventajas de la navegación deliberativa y reactiva mediante una arquitectura híbrida. Mientras los waypoints proporcionan una trayectoria óptima y estable, Follow the Gap permite reaccionar ante obstáculos inesperados y Follow Wall Assist mejora la estabilidad cerca de las paredes.
 
-```bash
-ros2 topic list
-ros2 topic echo /scan
-```
-
-Si el LiDAR utiliza otro tópico, debe cambiarse la suscripción:
-
-```python
-self.create_subscription(
-    LaserScan,
-    '/nombre_del_topic',
-    self.on_scan,
-    10
-)
-```
-
----
-
-## El waypoint no avanza
-
-Comprobar que la odometría se publique correctamente:
-
-```bash
-ros2 topic echo /ego_racecar/odom
-```
---- 
-
-# Conclusión
-
-El controlador implementa una estrategia híbrida de navegación reactiva.
-
-Follow the Gap se encarga de detectar espacios libres y evitar obstáculos. Los waypoints proporcionan una referencia global para mantener al vehículo dentro de la ruta del circuito. Los rangos de estado regulan la velocidad y activan una corrección adicional cuando existe un riesgo inmediato de colisión.
-
-Esta combinación permite que el vehículo:
-
-* Reaccione ante obstáculos mediante el LiDAR.
-* Mantenga una orientación general hacia la ruta.
-* Reduzca la velocidad en zonas comprometidas.
-* Active una repulsión de emergencia.
-* Registre el número y tiempo de las vueltas.
-
-El resultado es un controlador que combina navegación local, orientación global y adaptación de velocidad en una única estrategia.
-
+Esta integración permite completar el circuito de forma autónoma manteniendo altas velocidades cuando el entorno es seguro y reduciendo el riesgo de colisiones cuando aparecen obstáculos, logrando un equilibrio entre eficiencia, estabilidad y seguridad.
