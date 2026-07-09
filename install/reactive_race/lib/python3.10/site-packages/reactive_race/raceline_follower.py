@@ -1,12 +1,12 @@
-#!/usr/bin/env python3
 """
-F1Tenth Controller - Follow the Gap - Jcgallo
+Controlador F1Tenth - Follow the Gap estabilizado - Jcgallo
 
 Arquitectura:
-- Waypoints = guía principal.
-- Follow the Gap = solo cuando el camino al waypoint está bloqueado.
-- Follow Wall Assist = solo apoyo lateral en AVOID/PELIGRO.
-""" 
+- Waypoints = guía principal de navegación.
+- Follow the Gap = se activa cuando el camino hacia el waypoint está bloqueado.
+- Asistencia de pared = solo ayuda en situaciones de peligro real.
+- Estabilización = evita giros bruscos y cambios nerviosos entre huecos.
+"""
 
 import rclpy
 from rclpy.node import Node
@@ -32,450 +32,716 @@ WAYPOINTS = [
     (30.80,  51.81), (31.13,  54.08), (23.88,  57.66), (15.91,  57.01),
     ( 6.41,  53.18), ( 2.00,  49.56), (-0.86,  42.57)
 ]
-
-
-class P:
-    # ── VARIABLES DE CONTROL FÍSICO ──
-    CLIP          = 10.0
-    MAX_STEER     = 0.41
-    STEER_SMOOTH  = 0.15
-
-    # ── FOLLOW THE GAP ORIGINAL ──
-    SAFE_GAP_DIST = 4.5 
-    BUBBLE_R      = 0.90
-    MAX_GAP_LOOK_ANGLE = 1.05
-
-    # ── ZONAS ORIGINALES ──
-    DIST_SAFE     = 4.5     
-    DIST_CAUTION  = 1.50       
-
-    # ── REPULSIÓN ORIGINAL ──
-    REPULSION_K   = 1.25 
-    MAX_REPULSION_OFFSET = 0.22
-
-    # ── VELOCIDADES ORIGINALES ──
-    SPEED_MAX     = 8.5  
-    SPEED_CORNER  = 4.7 
-    SPEED_DANGER  = 2.5
-    SPEED_BRAKE_K = 0.95 
  
-    # ── WAYPOINT + FOLLOW THE GAP PREVENTIVO ──
-    PATH_CHECK_WIDTH = 0.20
-    FRONT_CHECK_WIDTH = 0.25
 
-    AVOID_ENTER_DIST = 3.2
-    AVOID_EXIT_DIST  = 4.2 
+class Parametros:
+    # ─────────────────────────────────────────────
+    # CONTROL FÍSICO
+    # ─────────────────────────────────────────────
+    DISTANCIA_MAXIMA_LIDAR = 10.0
+    GIRO_MAXIMO = 0.41
 
-    AVOID_FREE_DIST = 1.35
-    GAP_MIN_LEN = 7
+    # Mientras más alto, más conserva el giro anterior.
+    # 0.72 evita volantazos, pero todavía permite reaccionar.
+    SUAVIZADO_GIRO = 0.90  
 
-    GAP_GOAL_W = 2.80
-    GAP_CENTER_W = 1.00
-    GAP_DIST_W = 0.60
-    GAP_SMOOTH_W = 0.25
+    # Cambio máximo permitido del volante por lectura del LiDAR.
+    CAMBIO_MAXIMO_GIRO = 0.095 
+    CAMBIO_MAXIMO_GIRO_PELIGRO = 0.13
 
-    # ── BURBUJA FRENTE A OBSTÁCULOS ──
-    BUBBLE_TRIGGER_DIST = 3.5
-    BUBBLE_PATH_WIDTH = 0.35
+    # El hueco evita el obstáculo, pero la raceline sigue tirando del coche.
+    PESO_HUECO_ESQUIVE = 0.78
+    PESO_HUECO_PELIGRO = 0.92
 
-    # ── FOLLOW WALL ASSIST SOLO EN AVOID/PELIGRO ──
-    WALL_DESIRED_DIST = 1.00
-    WALL_ACTIVE_DIST = 0.90
-    WALL_LOOKAHEAD = 1.20
-    WALL_THETA = math.radians(45.0)
+    # ─────────────────────────────────────────────
+    # FOLLOW THE GAP / HUECO
+    # ─────────────────────────────────────────────
+    DISTANCIA_HUECO_SEGURO = 4.5 
+    DISTANCIA_HUECO_MINIMA = 1.35
+    LONGITUD_MINIMA_HUECO = 7
+    ANGULO_BUSQUEDA_HUECO = 1.05
 
-    WALL_KP = 0.14
-    WALL_MAX_CORRECTION = 0.10
+    # Evita tomar los bordes del hueco.
+    MARGEN_BORDE_HUECO = 4
+
+    # Suaviza el ángulo seleccionado del hueco.
+    SUAVIZADO_ANGULO_HUECO = 0.60
+
+    # Pesos para elegir el mejor hueco.
+    PESO_OBJETIVO_HUECO = 2.80
+    PESO_CENTRO_HUECO = 1.20 
+    PESO_DISTANCIA_HUECO = 0.60
+    PESO_SUAVIDAD_VOLANTE = 1.10
+    PESO_HUECO_ANTERIOR = 1.35
+
+    # ─────────────────────────────────────────────
+    # ZONAS DE SEGURIDAD
+    # ─────────────────────────────────────────────
+    DISTANCIA_SEGURA = 4.5
+    DISTANCIA_CUIDADO = 1.50
+
+    # ─────────────────────────────────────────────
+    # VELOCIDADES
+    # ─────────────────────────────────────────────
+    VELOCIDAD_MAXIMA = 8.5
+    VELOCIDAD_CURVA = 4.9 
+    VELOCIDAD_CURVA_FUERTE = 3.5
+    VELOCIDAD_PELIGRO = 2.0 
+    SUAVIZADO_FRENADO = 0.95
+
+    # ─────────────────────────────────────────────
+    # REVISIÓN DEL CAMINO HACIA EL WAYPOINT
+    # ─────────────────────────────────────────────
+    ANCHO_REVISION_RUTA = 0.20
+    ANCHO_REVISION_FRONTAL = 0.25
+
+    DISTANCIA_ENTRAR_ESQUIVE = 3.2
+    DISTANCIA_SALIR_ESQUIVE = 4.2
+    DISTANCIA_ENTRAR_ESQUIVE_CURVA = 2.55
+    LECTURAS_ENTRAR_ESQUIVE = 2
+    LECTURAS_SALIR_ESQUIVE = 4
+
+    # ─────────────────────────────────────────────
+    # BURBUJA DEL OBSTÁCULO
+    # ─────────────────────────────────────────────
+    RADIO_BURBUJA = 0.90
+    DISTANCIA_ACTIVAR_BURBUJA = 3.5
+    ANCHO_BURBUJA_RUTA = 0.35
+
+    # ─────────────────────────────────────────────
+    # REPULSIÓN DE EMERGENCIA
+    # ─────────────────────────────────────────────
+    # Baja para que no pelee contra el Follow the Gap.
+    FUERZA_REPULSION = 0.65
+    MAX_CORRECCION_REPULSION = 0.12
+
+    # ─────────────────────────────────────────────
+    # ASISTENCIA DE PARED
+    # ─────────────────────────────────────────────
+    # Solo ayuda en peligro. No debe mandar sobre el gap.
+    DISTANCIA_DESEADA_PARED = 1.00
+    DISTANCIA_ACTIVAR_PARED = 0.80
+    LOOKAHEAD_PARED = 1.20
+    ANGULO_PARED = math.radians(45.0)
+
+    KP_PARED = 0.08
+    MAX_CORRECCION_PARED = 0.06
 
 
-class UnifiedRacer(Node):
+class CorredorHibridoUnificado(Node):
     def __init__(self):
-        super().__init__('unified_hybrid_racer')
-        self.pub = self.create_publisher(AckermannDriveStamped, '/drive', 10)
-        self.create_subscription(LaserScan, '/scan', self.on_scan, 10)
-        self.create_subscription(Odometry, '/ego_racecar/odom', self.on_odom, 10)
+        super().__init__('corredor_hibrido_unificado')
 
-        self.wp_xy = np.array(WAYPOINTS, dtype=np.float32)
-        self.n_wp = len(WAYPOINTS)
-        self.x = 0.0
-        self.y = 0.0
-        self.yaw = 0.0 
-        self.wp_idx = 0
-        self.prev_steer = 0.0
-        self.prev_speed = P.SPEED_CORNER
+        self.publicador = self.create_publisher(AckermannDriveStamped, '/drive', 10)
+        self.create_subscription(LaserScan, '/scan', self.al_recibir_lidar, 10)
+        self.create_subscription(Odometry, '/ego_racecar/odom', self.al_recibir_odometria, 10)
 
-        self.angles = None
-        self.nr = None
+        self.waypoints_xy = np.array(WAYPOINTS, dtype=np.float32)
+        self.cantidad_waypoints = len(WAYPOINTS)
 
-        self.avoid_mode = False
+        self.posicion_x = 0.0
+        self.posicion_y = 0.0
+        self.orientacion_yaw = 0.0
 
-        self.lap_count = 0
-        self.lap_start_time = None
-        self.best_lap_time = float('inf')
-        self.crossed_checkpoint = False
+        self.indice_waypoint = 0
 
-        self.get_logger().info("INICIA CARRERA") 
+        self.giro_anterior = 0.0
+        self.velocidad_anterior = Parametros.VELOCIDAD_CURVA
 
-    def normalize_angle(self, angle):
-        return (angle + math.pi) % (2.0 * math.pi) - math.pi
+        self.angulos_lidar = None
+        self.cantidad_rayos_lidar = None
 
-    def get_range_at_angle(self, r, angle):
-        idx = int(np.argmin(np.abs(self.angles - angle)))
-        return float(r[idx])
+        self.modo_esquive = False
+        self.lecturas_entrada_esquive = 0
+        self.lecturas_salida_esquive = 0
 
-    def percentile_dist(self, r, mask, percentile=10):
-        values = r[mask]
+        # Memoria del hueco anterior para no saltar nerviosamente entre huecos.
+        self.angulo_hueco_anterior = 0.0
+        self.borde_izquierdo_hueco_anterior = None
+        self.borde_derecho_hueco_anterior = None
 
-        if values.size == 0:
-            return P.CLIP
+        self.numero_vueltas = 0
+        self.tiempo_inicio_vuelta = None
+        self.mejor_tiempo_vuelta = float('inf')
+        self.cruzo_checkpoint = False
 
-        return float(np.percentile(values, percentile))
+        self.get_logger().info("INICIA CARRERA")
 
-    def compute_goal_angle(self):
-        wp = self.wp_xy[self.wp_idx]
+    def normalizar_angulo(self, angulo):
+        return (angulo + math.pi) % (2.0 * math.pi) - math.pi
 
-        goal_angle = math.atan2(
-            float(wp[1]) - self.y,
-            float(wp[0]) - self.x
-        ) - self.yaw
+    def obtener_distancia_en_angulo(self, distancias_lidar, angulo):
+        indice = int(np.argmin(np.abs(self.angulos_lidar - angulo)))
+        return float(distancias_lidar[indice])
 
-        goal_angle = self.normalize_angle(goal_angle)
-        goal_angle = float(np.clip(goal_angle, -0.75, 0.75))
+    def distancia_percentil(self, distancias_lidar, mascara, percentil=10):
+        valores = distancias_lidar[mascara]
 
-        return goal_angle
+        if valores.size == 0:
+            return Parametros.DISTANCIA_MAXIMA_LIDAR
 
-    def follow_wall_assist(self, r):
-        theta = P.WALL_THETA
-        lookahead = P.WALL_LOOKAHEAD
-        desired = P.WALL_DESIRED_DIST
+        return float(np.percentile(valores, percentil))
 
-        correction = 0.0
+    def suavizar_lidar(self, distancias_lidar):
+        izquierda = np.r_[distancias_lidar[0], distancias_lidar[:-1]]
+        derecha = np.r_[distancias_lidar[1:], distancias_lidar[-1]]
 
-        b_right = self.get_range_at_angle(r, -math.pi / 2.0)
-        a_right = self.get_range_at_angle(r, -math.pi / 4.0)
-
-        b_left = self.get_range_at_angle(r, math.pi / 2.0)
-        a_left = self.get_range_at_angle(r, math.pi / 4.0)
-
-        if b_right < P.WALL_ACTIVE_DIST and a_right < P.CLIP:
-            alpha_r = math.atan2(
-                a_right * math.cos(theta) - b_right,
-                max(a_right * math.sin(theta), 1e-3)
-            )
-
-            dt_right = b_right * math.cos(alpha_r)
-            dt1_right = dt_right + lookahead * math.sin(alpha_r)
-
-            error_right = desired - dt1_right
-
-            if error_right > 0.0:
-                correction += P.WALL_KP * error_right
-
-        if b_left < P.WALL_ACTIVE_DIST and a_left < P.CLIP:
-            alpha_l = math.atan2(
-                a_left * math.cos(theta) - b_left,
-                max(a_left * math.sin(theta), 1e-3)
-            )
-
-            dt_left = b_left * math.cos(alpha_l)
-            dt1_left = dt_left + lookahead * math.sin(alpha_l)
-
-            error_left = desired - dt1_left
-
-            if error_left > 0.0:
-                correction -= P.WALL_KP * error_left
-
-        return float(np.clip(correction, -P.WALL_MAX_CORRECTION, P.WALL_MAX_CORRECTION))
-
-    def apply_obstacle_bubble(self, r, goal_angle):
-        driving_mask = np.abs(self.angles) < P.MAX_GAP_LOOK_ANGLE
-        proc_lidar = np.where(driving_mask, r.copy(), 0.0)
-
-        path_bubble_mask = (
-            driving_mask &
-            (np.abs(self.angles - goal_angle) < P.BUBBLE_PATH_WIDTH) &
-            (r < P.BUBBLE_TRIGGER_DIST)
+        return np.median(
+            np.vstack((izquierda, distancias_lidar, derecha)),
+            axis=0
         )
 
-        candidate_indices = np.where(path_bubble_mask)[0]
+    def calcular_angulo_objetivo(self):
+        waypoint_actual = self.waypoints_xy[self.indice_waypoint]
 
-        if candidate_indices.size == 0:
-            front_bubble_mask = (
-                driving_mask &
-                (np.abs(self.angles) < P.FRONT_CHECK_WIDTH) &
-                (r < P.BUBBLE_TRIGGER_DIST)
-            )
-            candidate_indices = np.where(front_bubble_mask)[0]
+        angulo_objetivo = math.atan2(
+            float(waypoint_actual[1]) - self.posicion_y,
+            float(waypoint_actual[0]) - self.posicion_x
+        ) - self.orientacion_yaw
 
-        if candidate_indices.size == 0:
-            return proc_lidar
+        angulo_objetivo = self.normalizar_angulo(angulo_objetivo)
+        angulo_objetivo = float(np.clip(angulo_objetivo, -0.75, 0.75))
 
-        closest_idx = candidate_indices[int(np.argmin(r[candidate_indices]))]
-        closest_dist = max(float(r[closest_idx]), 0.10)
+        return angulo_objetivo
 
-        angle_inc = abs((self.angles[-1] - self.angles[0]) / max(1, self.nr - 1))
+    def asistencia_pared(self, distancias_lidar):
+        angulo_pared = Parametros.ANGULO_PARED
+        lookahead = Parametros.LOOKAHEAD_PARED
+        distancia_deseada = Parametros.DISTANCIA_DESEADA_PARED
 
-        bubble_angle = math.atan2(P.BUBBLE_R, closest_dist)
-        bubble_idx = int(bubble_angle / angle_inc) + 1
+        correccion = 0.0
 
-        left = max(0, closest_idx - bubble_idx)
-        right = min(self.nr, closest_idx + bubble_idx + 1)
+        distancia_derecha_90 = self.obtener_distancia_en_angulo(distancias_lidar, -math.pi / 2.0)
+        distancia_derecha_45 = self.obtener_distancia_en_angulo(distancias_lidar, -math.pi / 4.0)
 
-        proc_lidar[left:right] = 0.0
+        distancia_izquierda_90 = self.obtener_distancia_en_angulo(distancias_lidar, math.pi / 2.0)
+        distancia_izquierda_45 = self.obtener_distancia_en_angulo(distancias_lidar, math.pi / 4.0)
 
-        return proc_lidar
-
-    def choose_best_gap(self, proc_lidar, goal_angle):
-        free_rays = proc_lidar >= P.SAFE_GAP_DIST
-        free_indices = np.where(free_rays)[0]
-
-        if free_indices.size == 0:
-            free_rays = proc_lidar >= P.AVOID_FREE_DIST
-            free_indices = np.where(free_rays)[0]
-
-        if free_indices.size == 0:
-            return float(self.angles[int(np.argmax(proc_lidar))])
-
-        breaks = np.where(np.diff(free_indices) > 1)[0]
-        starts = np.r_[0, breaks + 1]
-        ends = np.r_[breaks, len(free_indices) - 1]
-
-        best_score = -1e9
-        best_angle = goal_angle
-        valid_gap = False
-
-        for s, e in zip(starts, ends):
-            gap = free_indices[s:e + 1]
-
-            if len(gap) < P.GAP_MIN_LEN:
-                continue
-
-            valid_gap = True
-
-            gap_angles = self.angles[gap]
-            gap_dists = proc_lidar[gap]
-
-            n = len(gap)
-
-            center_margin = np.minimum(np.arange(n), np.arange(n)[::-1])
-            center_score = center_margin / max(1.0, n / 2.0)
-
-            goal_score = 1.0 - np.clip(
-                np.abs(gap_angles - goal_angle) / P.MAX_GAP_LOOK_ANGLE,
-                0.0,
-                1.0
+        if (
+            distancia_derecha_90 < Parametros.DISTANCIA_ACTIVAR_PARED and
+            distancia_derecha_45 < Parametros.DISTANCIA_MAXIMA_LIDAR
+        ):
+            alpha_derecha = math.atan2(
+                distancia_derecha_45 * math.cos(angulo_pared) - distancia_derecha_90,
+                max(distancia_derecha_45 * math.sin(angulo_pared), 1e-3)
             )
 
-            dist_score = np.clip(gap_dists / P.CLIP, 0.0, 1.0)
+            distancia_actual_derecha = distancia_derecha_90 * math.cos(alpha_derecha)
+            distancia_futura_derecha = distancia_actual_derecha + lookahead * math.sin(alpha_derecha)
 
-            smooth_score = 1.0 - np.clip(
-                np.abs(gap_angles - self.prev_steer) / P.MAX_STEER,
-                0.0,
-                1.0
+            error_derecha = distancia_deseada - distancia_futura_derecha
+
+            if error_derecha > 0.0:
+                correccion += Parametros.KP_PARED * error_derecha
+
+        if (
+            distancia_izquierda_90 < Parametros.DISTANCIA_ACTIVAR_PARED and
+            distancia_izquierda_45 < Parametros.DISTANCIA_MAXIMA_LIDAR
+        ):
+            alpha_izquierda = math.atan2(
+                distancia_izquierda_45 * math.cos(angulo_pared) - distancia_izquierda_90,
+                max(distancia_izquierda_45 * math.sin(angulo_pared), 1e-3)
             )
 
-            scores = (
-                P.GAP_GOAL_W * goal_score +
-                P.GAP_CENTER_W * center_score +
-                P.GAP_DIST_W * dist_score +
-                P.GAP_SMOOTH_W * smooth_score
-            )
+            distancia_actual_izquierda = distancia_izquierda_90 * math.cos(alpha_izquierda)
+            distancia_futura_izquierda = distancia_actual_izquierda + lookahead * math.sin(alpha_izquierda)
 
-            local_best = int(np.argmax(scores))
-            score = float(scores[local_best])
+            error_izquierda = distancia_deseada - distancia_futura_izquierda
 
-            if score > best_score:
-                best_score = score
-                best_angle = float(gap_angles[local_best])
-
-        if not valid_gap:
-            best_angle = float(self.angles[int(np.argmax(proc_lidar))])
-
-        return best_angle
-
-    def compute_danger_repulsion_original(self, r):
-        repulsion_steer_offset = 0.0
-
-        active_mask = np.abs(self.angles) < 1.30
-        active_indices = np.where(active_mask)[0]
-
-        for idx in active_indices:
-            dist_muro = float(r[idx])
-
-            if dist_muro < P.DIST_CAUTION:
-                angle = float(self.angles[idx])
-
-                force = P.REPULSION_K * (
-                    (P.DIST_CAUTION - dist_muro) /
-                    (dist_muro + 1e-3)
-                )
-
-                repulsion_steer_offset -= force * np.sign(angle) * math.cos(angle)
+            if error_izquierda > 0.0:
+                correccion -= Parametros.KP_PARED * error_izquierda
 
         return float(
             np.clip(
-                repulsion_steer_offset,
-                -P.MAX_REPULSION_OFFSET,
-                P.MAX_REPULSION_OFFSET
+                correccion,
+                -Parametros.MAX_CORRECCION_PARED,
+                Parametros.MAX_CORRECCION_PARED
             )
         )
 
-    def on_odom(self, msg):
-        self.x = msg.pose.pose.position.x
-        self.y = msg.pose.pose.position.y
+    def aplicar_burbuja_obstaculo(self, distancias_lidar, angulo_objetivo):
+        mascara_conduccion = np.abs(self.angulos_lidar) < Parametros.ANGULO_BUSQUEDA_HUECO
+        lidar_procesado = np.where(mascara_conduccion, distancias_lidar.copy(), 0.0)
 
-        q = msg.pose.pose.orientation
-
-        self.yaw = math.atan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        mascara_obstaculo_en_ruta = (
+            mascara_conduccion &
+            (np.abs(self.angulos_lidar - angulo_objetivo) < Parametros.ANCHO_BURBUJA_RUTA) &
+            (distancias_lidar < Parametros.DISTANCIA_ACTIVAR_BURBUJA)
         )
 
-        target_wp = self.wp_xy[self.wp_idx]
+        indices_candidatos = np.where(mascara_obstaculo_en_ruta)[0]
 
-        dist_to_wp = math.hypot(
-            float(target_wp[0]) - self.x,
-            float(target_wp[1]) - self.y
+        if indices_candidatos.size == 0:
+            mascara_obstaculo_frontal = (
+                mascara_conduccion &
+                (np.abs(self.angulos_lidar) < Parametros.ANCHO_REVISION_FRONTAL) &
+                (distancias_lidar < Parametros.DISTANCIA_ACTIVAR_BURBUJA)
+            )
+
+            indices_candidatos = np.where(mascara_obstaculo_frontal)[0]
+
+        if indices_candidatos.size == 0:
+            return lidar_procesado
+
+        indice_obstaculo_cercano = indices_candidatos[
+            int(np.argmin(distancias_lidar[indices_candidatos]))
+        ]
+
+        distancia_obstaculo_cercano = max(
+            float(distancias_lidar[indice_obstaculo_cercano]),
+            0.10
         )
 
-        if dist_to_wp < 3.5:
-            self.wp_idx = (self.wp_idx + 1) % self.n_wp
+        incremento_angular = abs(
+            (self.angulos_lidar[-1] - self.angulos_lidar[0]) /
+            max(1, self.cantidad_rayos_lidar - 1)
+        )
 
-        if 20.0 < self.x < 25.0 and -26.0 < self.y < -20.0:
-            self.crossed_checkpoint = True
+        angulo_burbuja = math.atan2(
+            Parametros.RADIO_BURBUJA,
+            distancia_obstaculo_cercano
+        )
 
-        if -1.8 < self.x < 1.8 and -2.2 < self.y < 2.2:
-            if self.crossed_checkpoint:
-                current_time = time.time()
+        rayos_burbuja = int(angulo_burbuja / incremento_angular) + 1
 
-                if self.lap_start_time is not None:
-                    lap_duration = current_time - self.lap_start_time
-                    self.lap_count += 1
+        limite_izquierdo = max(0, indice_obstaculo_cercano - rayos_burbuja)
+        limite_derecho = min(
+            self.cantidad_rayos_lidar,
+            indice_obstaculo_cercano + rayos_burbuja + 1
+        )
 
-                    if lap_duration < self.best_lap_time:
-                        self.best_lap_time = lap_duration
+        lidar_procesado[limite_izquierdo:limite_derecho] = 0.0
+
+        return lidar_procesado
+
+    def elegir_mejor_hueco(self, lidar_procesado, angulo_objetivo):
+        rayos_libres = lidar_procesado >= Parametros.DISTANCIA_HUECO_SEGURO
+        indices_libres = np.where(rayos_libres)[0]
+
+        if indices_libres.size == 0:
+            rayos_libres = lidar_procesado >= Parametros.DISTANCIA_HUECO_MINIMA
+            indices_libres = np.where(rayos_libres)[0]
+
+        if indices_libres.size == 0:
+            angulo_emergencia = float(self.angulos_lidar[int(np.argmax(lidar_procesado))])
+            return angulo_emergencia
+
+        cortes = np.where(np.diff(indices_libres) > 1)[0]
+        inicios = np.r_[0, cortes + 1]
+        finales = np.r_[cortes, len(indices_libres) - 1]
+
+        mejor_puntaje = -1e9
+        mejor_angulo = angulo_objetivo
+        mejor_borde_izquierdo = None
+        mejor_borde_derecho = None
+        existe_hueco_valido = False
+
+        for inicio, final in zip(inicios, finales):
+            hueco = indices_libres[inicio:final + 1]
+
+            if len(hueco) < Parametros.LONGITUD_MINIMA_HUECO:
+                continue
+
+            existe_hueco_valido = True
+
+            # No conviene apuntar al borde del hueco porque puede rozar paredes.
+            if len(hueco) > 2 * Parametros.MARGEN_BORDE_HUECO:
+                hueco_util = hueco[
+                    Parametros.MARGEN_BORDE_HUECO:
+                    -Parametros.MARGEN_BORDE_HUECO
+                ]
+            else:
+                hueco_util = hueco
+
+            angulos_hueco = self.angulos_lidar[hueco_util]
+            distancias_hueco = lidar_procesado[hueco_util]
+
+            cantidad_rayos_hueco = len(hueco_util)
+
+            margen_centro = np.minimum(
+                np.arange(cantidad_rayos_hueco),
+                np.arange(cantidad_rayos_hueco)[::-1]
+            ) 
+
+            puntaje_centro = margen_centro / max(1.0, cantidad_rayos_hueco / 2.0)
+
+            puntaje_objetivo = 1.0 - np.clip(
+                np.abs(angulos_hueco - angulo_objetivo) /
+                Parametros.ANGULO_BUSQUEDA_HUECO,
+                0.0,
+                1.0
+            )
+
+            puntaje_distancia = np.clip(
+                distancias_hueco / Parametros.DISTANCIA_MAXIMA_LIDAR,
+                0.0,
+                1.0
+            )
+
+            puntaje_suavidad_volante = 1.0 - np.clip(
+                np.abs(angulos_hueco - self.giro_anterior) /
+                Parametros.GIRO_MAXIMO,
+                0.0,
+                1.0 
+            )
+
+            puntaje_hueco_anterior = 1.0 - np.clip(
+                np.abs(angulos_hueco - self.angulo_hueco_anterior) /
+                Parametros.GIRO_MAXIMO,
+                0.0,
+                1.0
+            )
+
+            puntajes = (
+                Parametros.PESO_OBJETIVO_HUECO * puntaje_objetivo +
+                Parametros.PESO_CENTRO_HUECO * puntaje_centro +
+                Parametros.PESO_DISTANCIA_HUECO * puntaje_distancia +
+                Parametros.PESO_SUAVIDAD_VOLANTE * puntaje_suavidad_volante +
+                Parametros.PESO_HUECO_ANTERIOR * puntaje_hueco_anterior
+            )
+
+            mejor_local = int(np.argmax(puntajes))
+            puntaje = float(puntajes[mejor_local])
+            angulo_candidato = float(angulos_hueco[mejor_local])
+
+            if puntaje > mejor_puntaje:
+                mejor_puntaje = puntaje
+                mejor_angulo = angulo_candidato
+                mejor_borde_izquierdo = int(hueco[0])
+                mejor_borde_derecho = int(hueco[-1])
+
+        if not existe_hueco_valido:
+            mejor_angulo = float(self.angulos_lidar[int(np.argmax(lidar_procesado))])
+
+        mejor_angulo = (
+            Parametros.SUAVIZADO_ANGULO_HUECO * self.angulo_hueco_anterior +
+            (1.0 - Parametros.SUAVIZADO_ANGULO_HUECO) * mejor_angulo
+        )
+
+        self.angulo_hueco_anterior = mejor_angulo
+        self.borde_izquierdo_hueco_anterior = mejor_borde_izquierdo
+        self.borde_derecho_hueco_anterior = mejor_borde_derecho
+
+        return float(mejor_angulo)
+
+    def calcular_repulsion_peligro(self, distancias_lidar):
+        correccion_repulsion = 0.0
+
+        mascara_activa = np.abs(self.angulos_lidar) < 1.30
+        indices_activos = np.where(mascara_activa)[0]
+
+        for indice in indices_activos:
+            distancia_muro = float(distancias_lidar[indice])
+
+            if distancia_muro < Parametros.DISTANCIA_CUIDADO:
+                angulo = float(self.angulos_lidar[indice])
+
+                fuerza = Parametros.FUERZA_REPULSION * (
+                    (Parametros.DISTANCIA_CUIDADO - distancia_muro) /
+                    (distancia_muro + 1e-3)
+                )
+
+                correccion_repulsion -= fuerza * np.sign(angulo) * math.cos(angulo)
+
+        return float(
+            np.clip(
+                correccion_repulsion,
+                -Parametros.MAX_CORRECCION_REPULSION,
+                Parametros.MAX_CORRECCION_REPULSION
+            )
+        )
+
+    def al_recibir_odometria(self, mensaje):
+        self.posicion_x = mensaje.pose.pose.position.x
+        self.posicion_y = mensaje.pose.pose.position.y
+
+        orientacion = mensaje.pose.pose.orientation
+
+        self.orientacion_yaw = math.atan2(
+            2.0 * (orientacion.w * orientacion.z + orientacion.x * orientacion.y),
+            1.0 - 2.0 * (orientacion.y * orientacion.y + orientacion.z * orientacion.z)
+        )
+
+        waypoint_objetivo = self.waypoints_xy[self.indice_waypoint]
+
+        distancia_al_waypoint = math.hypot(
+            float(waypoint_objetivo[0]) - self.posicion_x,
+            float(waypoint_objetivo[1]) - self.posicion_y
+        )
+
+        if distancia_al_waypoint < 3.5:
+            self.indice_waypoint = (
+                self.indice_waypoint + 1
+            ) % self.cantidad_waypoints
+
+        if 20.0 < self.posicion_x < 25.0 and -26.0 < self.posicion_y < -20.0:
+            self.cruzo_checkpoint = True
+
+        if -1.8 < self.posicion_x < 1.8 and -2.2 < self.posicion_y < 2.2:
+            if self.cruzo_checkpoint:
+                tiempo_actual = time.time()
+
+                if self.tiempo_inicio_vuelta is not None:
+                    duracion_vuelta = tiempo_actual - self.tiempo_inicio_vuelta
+                    self.numero_vueltas += 1
+
+                    if duracion_vuelta < self.mejor_tiempo_vuelta:
+                        self.mejor_tiempo_vuelta = duracion_vuelta
 
                     print("\n==========================================")
-                    print(f"🏁 ¡VUELTA {self.lap_count} COMPLETADA!")
-                    print(f"⏱️ Tiempo: {lap_duration:.3f} s | 🏆 Mejor: {self.best_lap_time:.3f} s")
+                    print(f"🏁 ¡VUELTA {self.numero_vueltas} COMPLETADA!")
+                    print(
+                        f"⏱️ Tiempo: {duracion_vuelta:.3f} s | "
+                        f"🏆 Mejor: {self.mejor_tiempo_vuelta:.3f} s"
+                    )
                     print("==========================================\n")
 
-                self.lap_start_time = current_time
-                self.crossed_checkpoint = False
+                self.tiempo_inicio_vuelta = tiempo_actual
+                self.cruzo_checkpoint = False
 
             else:
-                if self.lap_start_time is None:
-                    self.lap_start_time = time.time()
+                if self.tiempo_inicio_vuelta is None:
+                    self.tiempo_inicio_vuelta = time.time()
                     print("⏱️ Cronómetro iniciado. ¡Vuelta 1 en marcha!")
 
-    def on_scan(self, scan):
-        raw = np.array(scan.ranges, dtype=np.float32)
+    def al_recibir_lidar(self, escaneo):
+        lecturas_crudas = np.array(escaneo.ranges, dtype=np.float32)
 
-        if raw.size == 0:
+        if lecturas_crudas.size == 0:
             return
 
-        if self.angles is None:
-            self.nr = len(raw)
-            self.angles = np.linspace(scan.angle_min, scan.angle_max, self.nr)
+        if self.angulos_lidar is None:
+            self.cantidad_rayos_lidar = len(lecturas_crudas)
+            self.angulos_lidar = np.linspace(
+                escaneo.angle_min,
+                escaneo.angle_max,
+                self.cantidad_rayos_lidar
+            )
 
-        r = np.clip(raw, 0.0, P.CLIP)
-        r = np.where(np.isfinite(r), r, P.CLIP)
+        distancias_lidar = np.clip(
+            lecturas_crudas,
+            0.0,
+            Parametros.DISTANCIA_MAXIMA_LIDAR
+        )
 
-        goal_angle = self.compute_goal_angle()
+        distancias_lidar = np.where(
+            np.isfinite(distancias_lidar),
+            distancias_lidar,
+            Parametros.DISTANCIA_MAXIMA_LIDAR
+        )
+        distancias_lidar = self.suavizar_lidar(distancias_lidar)
 
-        path_mask = np.abs(self.angles - goal_angle) < P.PATH_CHECK_WIDTH
-        path_dist = self.percentile_dist(r, path_mask, 10)
+        angulo_objetivo = self.calcular_angulo_objetivo()
 
-        front_mask = np.abs(self.angles) < P.FRONT_CHECK_WIDTH
-        front_dist = self.percentile_dist(r, front_mask, 10)
+        mascara_ruta = (
+            np.abs(self.angulos_lidar - angulo_objetivo) <
+            Parametros.ANCHO_REVISION_RUTA
+        )
 
-        control_dist = min(path_dist, front_dist)
+        distancia_ruta = self.distancia_percentil(
+            distancias_lidar,
+            mascara_ruta,
+            10
+        )
 
-        if control_dist >= P.DIST_SAFE:
-            target_speed = P.SPEED_MAX
-            state = "SEGURA"
-        elif P.DIST_CAUTION <= control_dist < P.DIST_SAFE:
-            target_speed = P.SPEED_CORNER
-            state = "CUIDADO"
+        mascara_frontal = (
+            np.abs(self.angulos_lidar) <
+            Parametros.ANCHO_REVISION_FRONTAL
+        )
+
+        distancia_frontal = self.distancia_percentil(
+            distancias_lidar,
+            mascara_frontal,
+            10
+        )
+
+        distancia_control = min(distancia_ruta, distancia_frontal)
+
+        if distancia_control >= Parametros.DISTANCIA_SEGURA:
+            velocidad_objetivo = Parametros.VELOCIDAD_MAXIMA
+            estado = "SEGURA"
+        elif Parametros.DISTANCIA_CUIDADO <= distancia_control < Parametros.DISTANCIA_SEGURA:
+            velocidad_objetivo = Parametros.VELOCIDAD_CURVA
+            estado = "CUIDADO"
         else:
-            target_speed = P.SPEED_DANGER
-            state = "PELIGRO"
+            velocidad_objetivo = Parametros.VELOCIDAD_PELIGRO
+            estado = "PELIGRO"
 
-        if path_dist < P.AVOID_ENTER_DIST:
-            self.avoid_mode = True
+        if abs(angulo_objetivo) > 0.28:
+            velocidad_objetivo = min(
+                velocidad_objetivo,
+                Parametros.VELOCIDAD_CURVA_FUERTE
+            )
 
-        if self.avoid_mode and path_dist > P.AVOID_EXIT_DIST:
-            self.avoid_mode = False
+        distancia_entrada_esquive = Parametros.DISTANCIA_ENTRAR_ESQUIVE
+        if abs(angulo_objetivo) > 0.30:
+            distancia_entrada_esquive = Parametros.DISTANCIA_ENTRAR_ESQUIVE_CURVA
 
-        if self.avoid_mode:
-            proc_lidar = self.apply_obstacle_bubble(r, goal_angle)
-            gap_steer = self.choose_best_gap(proc_lidar, goal_angle)
-            mode = "AVOID"
+        camino_bloqueado = (
+            distancia_ruta < distancia_entrada_esquive or
+            distancia_frontal < Parametros.DISTANCIA_CUIDADO
+        )
+
+        camino_liberado = (
+            distancia_ruta > Parametros.DISTANCIA_SALIR_ESQUIVE and
+            distancia_frontal > Parametros.DISTANCIA_CUIDADO
+        )
+
+        if camino_bloqueado:
+            self.lecturas_entrada_esquive += 1
+            self.lecturas_salida_esquive = 0
         else:
-            gap_steer = goal_angle
-            mode = "WAYPOINT"
+            self.lecturas_entrada_esquive = 0
 
-        wall_correction = 0.0
+        if (
+            not self.modo_esquive and
+            self.lecturas_entrada_esquive >= Parametros.LECTURAS_ENTRAR_ESQUIVE
+        ):
+            self.modo_esquive = True
 
-        if self.avoid_mode or state == "PELIGRO":
-            wall_correction = self.follow_wall_assist(r)
+        if self.modo_esquive and camino_liberado:
+            self.lecturas_salida_esquive += 1
+        elif self.modo_esquive:
+            self.lecturas_salida_esquive = 0
 
-        repulsion_steer_offset = 0.0
+        if (
+            self.modo_esquive and
+            self.lecturas_salida_esquive >= Parametros.LECTURAS_SALIR_ESQUIVE
+        ):
+            self.modo_esquive = False
+            self.lecturas_entrada_esquive = 0
 
-        if state == "PELIGRO":
-            repulsion_steer_offset = self.compute_danger_repulsion_original(r)
+        if self.modo_esquive:
+            lidar_procesado = self.aplicar_burbuja_obstaculo(
+                distancias_lidar,
+                angulo_objetivo
+            )
 
-        chosen_steer = gap_steer + wall_correction + repulsion_steer_offset
+            giro_hueco = self.elegir_mejor_hueco(
+                lidar_procesado,
+                angulo_objetivo
+            )
+            peso_hueco = Parametros.PESO_HUECO_ESQUIVE
+            if estado == "PELIGRO":
+                peso_hueco = Parametros.PESO_HUECO_PELIGRO
 
-        chosen_steer = float(
+            giro_hueco = (
+                peso_hueco * giro_hueco +
+                (1.0 - peso_hueco) * angulo_objetivo
+            )
+
+            modo = "ESQUIVE"
+
+            # Mientras esquiva no debería ir a velocidad máxima.
+            velocidad_objetivo = min(
+                velocidad_objetivo,
+                Parametros.VELOCIDAD_CURVA
+            )
+
+        else:
+            giro_hueco = angulo_objetivo
+            modo = "WAYPOINT"
+
+            # Cuando vuelve al waypoint, sincroniza la memoria del hueco
+            # para evitar un salto si entra nuevamente en modo esquive.
+            self.angulo_hueco_anterior = giro_hueco
+
+        correccion_pared = 0.0
+        correccion_repulsion = 0.0
+
+        # La prioridad es el hueco. Pared y repulsión solo entran en peligro real.
+        if estado == "PELIGRO":
+            correccion_pared = self.asistencia_pared(distancias_lidar)
+            correccion_repulsion = self.calcular_repulsion_peligro(distancias_lidar)
+
+        giro_elegido = giro_hueco + correccion_pared + correccion_repulsion
+
+        giro_elegido = float(
             np.clip(
-                chosen_steer,
-                -P.MAX_STEER,
-                P.MAX_STEER
+                giro_elegido,
+                -Parametros.GIRO_MAXIMO,
+                Parametros.GIRO_MAXIMO
             )
         )
 
-        steer = P.STEER_SMOOTH * self.prev_steer + \
-            (1.0 - P.STEER_SMOOTH) * chosen_steer
+        if abs(giro_elegido) > 0.30:
+            velocidad_objetivo = min(
+                velocidad_objetivo,
+                Parametros.VELOCIDAD_CURVA_FUERTE
+            )
 
-        steer = float(
+        suavizado_giro = Parametros.SUAVIZADO_GIRO
+        cambio_maximo_giro = Parametros.CAMBIO_MAXIMO_GIRO
+
+        if estado == "PELIGRO":
+            suavizado_giro = 0.78
+            cambio_maximo_giro = Parametros.CAMBIO_MAXIMO_GIRO_PELIGRO
+        elif self.modo_esquive:
+            suavizado_giro = 0.84
+
+        # Suavizado principal del volante.
+        giro_suavizado = (
+            suavizado_giro * self.giro_anterior +
+            (1.0 - suavizado_giro) * giro_elegido
+        )
+
+        # Limitador del cambio de giro por lectura.
+        delta_giro = giro_suavizado - self.giro_anterior
+        delta_giro = float(
             np.clip(
-                steer,
-                -P.MAX_STEER,
-                P.MAX_STEER
+                delta_giro,
+                -cambio_maximo_giro,
+                cambio_maximo_giro
             )
         )
 
-        self.prev_steer = steer
+        giro_final = self.giro_anterior + delta_giro
 
-        if target_speed < self.prev_speed:
-            speed = (1.0 - P.SPEED_BRAKE_K) * self.prev_speed + \
-                P.SPEED_BRAKE_K * target_speed
+        giro_final = float(
+            np.clip(
+                giro_final,
+                -Parametros.GIRO_MAXIMO,
+                Parametros.GIRO_MAXIMO
+            )
+        )
+
+        self.giro_anterior = giro_final
+
+        if velocidad_objetivo < self.velocidad_anterior:
+            velocidad_final = (
+                (1.0 - Parametros.SUAVIZADO_FRENADO) * self.velocidad_anterior +
+                Parametros.SUAVIZADO_FRENADO * velocidad_objetivo
+            )
         else:
-            speed = 0.20 * self.prev_speed + 0.80 * target_speed
+            velocidad_final = (
+                0.20 * self.velocidad_anterior +
+                0.80 * velocidad_objetivo
+            )
 
-        self.prev_speed = speed
+        self.velocidad_anterior = velocidad_final
 
-        msg = AckermannDriveStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.drive.steering_angle = float(steer)
-        msg.drive.speed = float(speed)
-        self.pub.publish(msg) 
+        mensaje = AckermannDriveStamped()
+        mensaje.header.stamp = self.get_clock().now().to_msg()
+        mensaje.drive.steering_angle = float(giro_final)
+        mensaje.drive.speed = float(velocidad_final)
+
+        self.publicador.publish(mensaje)
 
 
 def main(args=None):
     rclpy.init(args=args)
 
-    node = UnifiedRacer()
+    nodo = CorredorHibridoUnificado()
 
     try:
-        rclpy.spin(node)
+        rclpy.spin(nodo)
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        nodo.destroy_node()
         rclpy.shutdown()
 
 
 if __name__ == '__main__':
     main() 
+  
