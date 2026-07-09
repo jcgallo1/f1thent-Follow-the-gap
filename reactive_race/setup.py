@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [ 
             'raceline_follower = reactive_race.raceline_follower:main',  
+            'raceline_obs = reactive_race.raceline_obs:main', 
          
         ], 
     },
