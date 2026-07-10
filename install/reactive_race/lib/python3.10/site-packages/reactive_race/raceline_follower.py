@@ -42,7 +42,6 @@ class Parametros:
     GIRO_MAXIMO = 0.41
 
     # Mientras más alto, más conserva el giro anterior.
-    # 0.72 evita volantazos, pero todavía permite reaccionar.
     SUAVIZADO_GIRO = 0.90  
 
     # Cambio máximo permitido del volante por lectura del LiDAR.
@@ -52,7 +51,7 @@ class Parametros:
     # El hueco evita el obstáculo, pero la raceline sigue tirando del coche.
     PESO_HUECO_ESQUIVE = 0.78
     PESO_HUECO_PELIGRO = 0.92
-
+ 
     # ─────────────────────────────────────────────
     # FOLLOW THE GAP / HUECO
     # ─────────────────────────────────────────────
