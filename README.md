@@ -12,9 +12,8 @@ El objetivo principal no es solamente ir rapido, sino terminar la vuelta sin cho
  
 El proyecto fue probado sobre el mapa de Sao Paulo con obstaculos. La imagen anterior corresponde a la mejor vuelta obtenida durante las pruebas.
 
-parte 1: https://youtu.be/_nHY6Dqidew
-parte 2: LINK : https://youtu.be/9GgGdCPfoaw 
-videos drive: https://drive.google.com/drive/folders/101dWJLPpRnqulz_o-n2Lp7Yrqwi1-Nrc?usp=drive_link
+parte 1: https://youtu.be/XcIoqDwqXgY
+parte 2: https://youtu.be/9GgGdCPfoaw  
 ---
 
 # Arquitectura General
